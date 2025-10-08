@@ -1,0 +1,63 @@
+name: Schema Check
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: "17 3 * * *"   # Her gün 06:17 TRT (~03:17 UTC) çalışsın
+  workflow_dispatch: {}
+
+jobs:
+  jsonld-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      URLS_FILE: tests/urls.txt
+      ORG_ID: https://www.icgiyimozel.com/#organization
+      SCHEMA_TIMEOUT: "20"
+      SCHEMA_RETRY: "2"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tests/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Run schema checks
+        id: runcheck
+        run: |
+          python tests/schema_check.py | tee schema_check.log
+
+      - name: Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-check-log
+          path: schema_check.log
+
+      # Opsiyon: Slack bildirimi (repo Secrets'te SLACK_WEBHOOK tanımlayın)
+      - name: Slack notify on failure
+        if: failure() && env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"❌ Schema Check failed on ${GITHUB_REPOSITORY}@${GITHUB_REF_NAME} — run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            "$SLACK_WEBHOOK"
