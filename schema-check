@@ -1,0 +1,57 @@
+import requests, json, sys
+from extruct import extract
+from w3lib.html import get_base_url
+
+def must(cond, msg):
+    if not cond:
+        print("❌", msg); sys.exit(1)
+
+def check_product(p):
+    must(p.get("@type")=="Product", "Product @type eksik")
+    must(p.get("name"), "Product name eksik")
+    brand = p.get("brand", {})
+    must( (isinstance(brand, dict) and brand.get("name")), "Brand.name eksik")
+    offers = p.get("offers", {})
+    # AggregateOffer veya Offer ikisini de destekleyelim:
+    if offers.get("@type") == "AggregateOffer":
+        must(isinstance(offers.get("offers"), list) and len(offers["offers"])>0, "AggregateOffer.offers yok")
+        offer0 = offers["offers"][0]
+        price_node = offer0
+    else:
+        price_node = offers
+    must(isinstance(price_node.get("price"), (int,float,str)) and str(price_node["price"]).replace(".","",1).isdigit(), "price sayı değil")
+    must(price_node.get("priceCurrency"), "priceCurrency yok")
+    must(price_node.get("availability"), "availability yok")
+    seller = price_node.get("seller", {})
+    must(isinstance(seller, dict) and seller.get("@id")=="https://www.icgiyimozel.com/#organization", "seller @id beklenen değil")
+
+def check_itemlist(il):
+    must(il.get("@type")=="ItemList", "ItemList @type eksik")
+    items = il.get("itemListElement", [])
+    must(len(items)>0, "ItemList boş")
+    # Her ListItem içinde Product bekleyelim
+    for i, li in enumerate(items, 1):
+        it = li.get("item", {})
+        must(it.get("@type")=="Product", f"ItemListElement[{i}] Product değil")
+        check_product(it)
+
+def check_url(url):
+    html = requests.get(url, timeout=15).text
+    data = extract(html, base_url=get_base_url(html, url), syntaxes=['json-ld'])["json-ld"]
+    must(len(data)>0, "JSON-LD bulunamadı")
+    found_product=False; found_itemlist=False
+    for node in data:
+        if node.get("@type")=="Product":
+            found_product=True; check_product(node)
+        if node.get("@type")=="ItemList":
+            found_itemlist=True; check_itemlist(node)
+    # Kategori sayfasında yalnız ItemList olabilir; ürün sayfasında Product şart.
+    print(f"✅ {url} kontrol geçti (Product:{found_product}, ItemList:{found_itemlist})")
+
+if __name__ == "__main__":
+    urls = [
+        # Örnek URL’leri ENV’den ya da bir txt dosyasından alabilirsin
+        "https://www.icgiyimozel.com/fantazi-babydoll-66-urunleri",
+        "https://www.icgiyimozel.com/bella-notte-kirmizi-ozel-bolgesi-ve-sirti-acik-babydoll-seksi-gecelik-15024-89775",
+    ]
+    for u in urls: check_url(u)
